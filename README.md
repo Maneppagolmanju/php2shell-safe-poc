@@ -4,12 +4,11 @@ Detection-only verification toolkit for **PHP2Shell** (CVE-2026-109618 / CVE-202
 
 ## What this is
 
-A set of **non-weaponized** scripts to answer two questions about a host you own/are authorized to test:
+**Primary purpose: find out whether your own PHP app is vulnerable — no WAF required, no WAF assumed.** `scripts/recon.sh` + `scripts/probe_oom.sh`, run directly against the origin, are the complete answer to that question on their own. See `docs/RUNBOOK.md` Part A.
 
-1. Is the PHP instance reachable through the vulnerable code path (version/config check + a single non-destructive OOM probe)?
-2. If a WAF sits in front of it, does the WAF actually block the probe, and which rule fires?
+**Separate, optional purpose:** if the app *does* sit behind a WAF/CDN, `scripts/verify_waf.sh` + `scripts/lookup_cf_rule.sh` additionally check whether the WAF is blocking this specific issue — and whether it's blocking it via a rule actually documented for this CVE, not an incidental generic match. This is Part B of the runbook and is a different question from "is the app vulnerable." A WAF result by itself proves nothing about the app underneath — see "Why the split exists" in `docs/RUNBOOK.md`.
 
-This repo intentionally does **not** include exploitation, memory-reclaim spraying, or RCE-chain code. It stops at "can we reach/trigger the reported fault condition" and "does the WAF catch it" — it does not attempt to pop a shell.
+This repo intentionally does **not** include exploitation, memory-reclaim spraying, or RCE-chain code. It stops at "can we reach/trigger the reported fault condition" and (optionally) "does the WAF catch it" — it does not attempt to pop a shell.
 
 ## What this is not
 
@@ -29,24 +28,36 @@ Public write-ups about CVE-2026-109618/109619 (including the ones this repo's pr
 
 ## Contents
 
-- `scripts/recon.sh` — version/ini check (run locally on the host, or adapt for SSH)
-- `scripts/probe_oom.sh` — builds and sends the non-destructive ARM request, reports whether the pre-userland OOM signature appears
+Core (vulnerability check, no WAF involved):
+- `scripts/recon.sh` — version/ini check (run locally on the host, or adapt for SSH); also reports `display_errors`, which changes how to read `probe_oom.sh`'s result
+- `scripts/probe_oom.sh` — builds and sends the non-destructive OOM probe plus a harmless baseline, reports a strong / weak-ambiguous / clean verdict (see Caveat below on why there are three, not two)
+
+Optional (only if a WAF/CDN is in front of the app):
 - `scripts/verify_waf.sh` — sends the identical probe through a WAF-fronted hostname and reports block vs. pass-through, surfacing the `cf-ray` header for cross-referencing against your WAF's event log
 - `scripts/lookup_cf_rule.sh` — given a `cf-ray` value, queries Cloudflare's Security Events API for the exact rule ID/description that fired, so you can confirm it matches the vendor's *documented, CVE-specific* rule rather than an incidental generic-anomaly match
-- `docs/RUNBOOK.md` — full walkthrough tying the above together into a verification procedure, including a decision table and remediation priority
+
+- `docs/RUNBOOK.md` — full walkthrough: Part A (is my app vulnerable — no WAF needed) and Part B (optional WAF coverage check), each with its own decision table
 
 ## Quick start
+
+**No WAF, or testing the origin directly — this is the complete vulnerability check:**
 
 ```bash
 # 1. recon (run on the host itself, or over SSH)
 bash scripts/recon.sh
 
-# 2. non-destructive probe against the origin directly (bypass any WAF/CDN)
+# 2. non-destructive probe against the origin (its own IP/hostname — nothing proxying in front)
 HOST=<origin-ip-or-host> PATH_=/index.php bash scripts/probe_oom.sh
 
 # 3. confirm worker survival
 curl -sk -i "https://$HOST$PATH_"
+```
 
+Read the result using `docs/RUNBOOK.md` Part A's verdict table — it covers patched-version, config-disabled, strong-signal, weak/ambiguous-signal, and clean-result cases explicitly, since a bare "no signal" is not the same as "safe" (see the `display_errors` caveat below).
+
+**Only if the app sits behind a WAF/CDN, as an additional, separate check:**
+
+```bash
 # 4. same probe through your public, WAF-fronted hostname
 HOST=<public-hostname> PATH_=/index.php bash scripts/verify_waf.sh
 
@@ -54,7 +65,7 @@ HOST=<public-hostname> PATH_=/index.php bash scripts/verify_waf.sh
 CF_API_TOKEN=<token> CF_ZONE_ID=<zone> RAY_ID=<cf-ray from step 4> bash scripts/lookup_cf_rule.sh
 ```
 
-See `docs/RUNBOOK.md` for how to read the results, including why step 5 matters (a `403` alone doesn't tell you whether a CVE-specific rule fired vs. an incidental generic one).
+A result here tells you about the WAF, not the app — see `docs/RUNBOOK.md` Part B.
 
 ## References
 

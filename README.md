@@ -23,7 +23,9 @@ This repo intentionally does **not** include exploitation, memory-reclaim sprayi
 
 ## Caveat on technical claims
 
-Public write-ups about CVE-2026-109618/109619 (including the ones this repo's probe logic was derived from) disagree with each other on the precise root-cause mechanism and on which mitigation covers which CVE. Treat PHP's own security advisory as ground truth; treat this repo's commentary as a verification aid, not an authoritative technical account.
+Public write-ups about CVE-2026-109618/109619 (including the ones this repo's probe logic was derived from) disagree with each other — at least three independent sources contradict each other's root-cause mechanism and on which mitigation covers which CVE. Treat PHP's own security advisory as ground truth; treat this repo's commentary as a verification aid, not an authoritative technical account.
+
+**`display_errors` matters for interpreting results.** The strong OOM signature `probe_oom.sh` looks for only appears in the response body when `display_errors=On`. With it `Off` (common in production), a vulnerable host still OOMs but returns an empty `500` body — the script falls back to a weaker, baseline-compared signal and says so explicitly. A clean-looking or ambiguous result under `display_errors=Off` is **not** a pass — see `docs/RUNBOOK.md` for how to read it.
 
 ## Contents
 

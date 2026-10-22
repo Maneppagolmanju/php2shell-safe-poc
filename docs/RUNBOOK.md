@@ -9,12 +9,14 @@ This ties `scripts/recon.sh`, `scripts/probe_oom.sh`, and `scripts/verify_waf.sh
 - **Reported scope:** unauthenticated memory-corruption bugs in PHP's `session.upload_progress` handling
 - **Patched in:** PHP 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 (released 2026-10-21)
 
-> Secondary write-ups disagree with each other on the precise CVE-to-mechanism mapping and on which single setting mitigates which CVE. Verify the mechanism description against **PHP's own security advisory** before restating it as fact anywhere.
+> Secondary write-ups disagree with each other on the precise CVE-to-mechanism mapping and on which single setting mitigates which CVE — at least three independently-circulating technical accounts contradict each other on root cause. Verify the mechanism description against **PHP's own security advisory** before restating it as fact anywhere.
+
+> **`display_errors` changes what a positive result looks like.** The `500` + `exhausted ... in Unknown on line 0` body text in step 2 only appears when `display_errors=On`. With `display_errors=Off` (the security-recommended, common production default), a vulnerable host still OOMs but returns a bare `500` with an **empty body** — indistinguishable at the body level from any unrelated server error. `probe_oom.sh` handles this by also sending a harmless baseline request and comparing status codes, reporting a status-only flip as a **weak/ambiguous** signal rather than silently calling it "unrecognized." Treat a weak signal as "not ruled out," not as a pass. This also means a full RCE chain (as opposed to the reachability probe here) has been reported elsewhere as itself being easier to achieve with `display_errors=On` and is comparatively less mature/less portable with it off — another reason a clean-looking result under `display_errors=Off` should not be read as reassuring.
 
 ## 2. Procedure
 
-1. **Recon** (on the host or over SSH): `bash scripts/recon.sh`. Confirms SAPI type, the `memory_limit`/`post_max_size` ratio, and whether `session.upload_progress` is enabled.
-2. **Probe the origin directly**, bypassing any WAF/CDN: `HOST=<origin> bash scripts/probe_oom.sh`. Checks for the pre-userland OOM signature (`500` + `exhausted ... in Unknown on line 0`).
+1. **Recon** (on the host or over SSH): `bash scripts/recon.sh`. Confirms SAPI type, the `memory_limit`/`post_max_size` ratio, whether `session.upload_progress` is enabled, and `display_errors` (so you know in advance which signal strength to expect from step 2).
+2. **Probe the origin directly**, bypassing any WAF/CDN: `HOST=<origin> bash scripts/probe_oom.sh`. Checks for the pre-userland OOM signature (`500` + `exhausted ... in Unknown on line 0`) and falls back to a baseline-comparison weak signal if that text is absent but the status code still flipped.
 3. **Confirm worker survival**: a plain follow-up `curl` to the same endpoint. Informative for SAPI classification; not alone proof of exploitability.
 4. **Negative control**: set `session.upload_progress.enabled = Off`, restart, re-run step 2's identical request. A clean `200` here is your evidence that this specific mitigation closes the tested path on your build.
 5. **WAF verification**: run the identical probe against the **public, WAF-fronted hostname**: `HOST=<public-host> bash scripts/verify_waf.sh`. A `403` (not a `500`) means the WAF is intercepting it before PHP ever sees it. The script prints the `cf-ray` header for the blocked request.
